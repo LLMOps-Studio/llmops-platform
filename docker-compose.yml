@@ -1,0 +1,213 @@
+# -----------------------------------------------------------------------------
+# LLMOps Platform - Centralized Infrastructure Composition
+# -----------------------------------------------------------------------------
+version: '3.8'
+
+x-python-service: &python-service
+  build:
+    context: .
+    dockerfile: Dockerfile.python-services
+    args:
+      GIT_ORG: LLMOps-Studio
+      GIT_REF: main
+      INCLUDE_LABS: "rag,promptops,schema,review,memory"
+      INCLUDE_STUDIO: "true"
+  image: llmops-platform-python:latest
+  networks:
+    - llmops_net
+
+services:
+  # ==========================================
+  # 1. CORE LLM & STATE INFRASTRUCTURE
+  # ==========================================
+  ollama:
+    image: ollama/ollama:latest
+    container_name: llmops-platform_ollama
+    ports:
+      - "11435:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - llmops_net
+
+  chromadb:
+    image: chromadb/chroma:0.5.3
+    container_name: llmops-platform_chroma
+    ports:
+      - "8088:8000"
+    environment:
+      - IS_PERSISTENT=TRUE
+      - PERSIST_DIRECTORY=/chroma/chroma
+      - ALLOW_RESET=TRUE
+      - ANONYMIZED_TELEMETRY=FALSE
+    volumes:
+      - chroma_data:/chroma/chroma
+    restart: unless-stopped
+    networks:
+      - llmops_net
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:latest
+    container_name: llmops-platform_mlflow
+    ports:
+      - "5000:5000"
+    command: >
+      mlflow server
+      --backend-store-uri sqlite:////mlflow/mlflow.db
+      --default-artifact-root /mlflow/artifacts
+      --host 0.0.0.0
+      --port 5000
+    volumes:
+      - mlflow_data:/mlflow
+    restart: unless-stopped
+    networks:
+      - llmops_net
+
+  # ==========================================
+  # 2. PYTHON SERVICES -- ONE SHARED IMAGE
+  #    (llmops-common + all labs + studio, pulled from GitHub, built once)
+  # ==========================================
+  studio-core:
+    <<: *python-service
+    container_name: llmops-platform_studio_core
+    environment:
+      - APP_MODULE=llmops_studio.app:app
+      - OLLAMA_HOST=http://ollama:11434
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+      - REVIEW_LAB_URL=http://review-lab:8000
+      - MEMORY_LAB_URL=http://memory-lab:8000
+    ports:
+      - "8000:8000"
+    depends_on:
+      - ollama
+      - mlflow
+      - review-lab
+      - memory-lab
+
+  rag-lab:
+    <<: *python-service
+    container_name: llmops-platform_rag_lab
+    environment:
+      - APP_MODULE=rag_benchmark_lab.api:app
+      - OLLAMA_HOST=http://ollama:11434
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+    ports:
+      - "8002:8000"
+
+  promptops-lab:
+    <<: *python-service
+    container_name: llmops-platform_promptops_lab
+    environment:
+      - APP_MODULE=promptops_lab.api:app
+      - OLLAMA_HOST=http://ollama:11434
+    ports:
+      - "8003:8000"
+
+  schema-lab:
+    <<: *python-service
+    container_name: llmops-platform_schema_lab
+    environment:
+      - APP_MODULE=schema_lab.api:app
+      - OLLAMA_HOST=http://ollama:11434
+    ports:
+      - "8004:8000"
+
+  review-lab:
+    <<: *python-service
+    container_name: llmops-platform_review_lab
+    environment:
+      - APP_MODULE=review_lab.api:app
+      - OLLAMA_HOST=http://ollama:11434
+    ports:
+      - "8005:8000"
+
+  memory-lab:
+    <<: *python-service
+    container_name: llmops-platform_memory_lab
+    environment:
+      - APP_MODULE=memory_lab.api:app
+      - OLLAMA_HOST=http://ollama:11434
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+    ports:
+      - "8006:8000"
+
+  # ==========================================
+  # 3. UI -- SEPARATE IMAGE, PULLED FROM ITS OWN REPO
+  #    (context is a git URL: no local sibling checkout required)
+  # ==========================================
+  studio-ui:
+    build:
+      context: https://github.com/LLMOps-Studio/llmops-studio-ui.git#main
+      dockerfile: Dockerfile
+    container_name: llmops-platform_ui
+    ports:
+      - "5173:80"
+    environment:
+      - VITE_API_BASE_URL=http://localhost:8000/api/v1
+    depends_on:
+      - studio-core
+    networks:
+      - llmops_net
+
+  # ==========================================
+  # 4. MONITORING STACK (Activated via profiles)
+  # ==========================================
+  postgres:
+    image: postgres:15-alpine
+    container_name: llmops-platform_postgres
+    profiles: ["monitoring"]
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=llmops
+      - POSTGRES_PASSWORD=llmops_secret
+      - POSTGRES_DB=schema_lab_db
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    restart: unless-stopped
+    networks:
+      - llmops_net
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: llmops-platform_prometheus
+    profiles: ["monitoring"]
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+    networks:
+      - llmops_net
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: llmops-platform_grafana
+    profiles: ["monitoring"]
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    networks:
+      - llmops_net
+
+networks:
+  llmops_net:
+    driver: bridge
+    name: llmops_net
+
+volumes:
+  ollama_data:
+  chroma_data:
+  mlflow_data:
+  pg_data:
