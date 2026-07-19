@@ -156,7 +156,21 @@ services:
     ports:
       - "5173:80"
     environment:
-      - VITE_API_BASE_URL=http://localhost:8000/api/v1
+      # These are read at CONTAINER START by docker-entrypoint.sh (not baked
+      # in at image build time), so changing them + `docker compose up -d`
+      # (no rebuild) is enough to point the UI at a different backend --
+      # e.g. a remote/host Ollama, or an LLMOps instance used to evaluate a
+      # Finwise model, running somewhere other than this compose stack.
+      #
+      # These are browser-facing URLs (the browser runs outside the
+      # llmops_net Docker network), so they use the HOST port mappings
+      # below, not the in-network service names other containers use.
+      - STUDIO_CORE_URL=http://localhost:8000/api/v1
+      - RAG_LAB_URL=http://localhost:8002
+      - PROMPTOPS_LAB_URL=http://localhost:8003
+      - SCHEMA_LAB_URL=http://localhost:8004
+      - REVIEW_LAB_URL=http://localhost:8005
+      - MEMORY_LAB_URL=http://localhost:8006
     depends_on:
       - studio-core
     networks:
