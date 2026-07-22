@@ -112,6 +112,7 @@ services:
     environment:
       - APP_MODULE=promptops_lab.api:app
       - OLLAMA_HOST=http://ollama:11434
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
     ports:
       - "8003:8000"
 
@@ -121,6 +122,7 @@ services:
     environment:
       - APP_MODULE=schema_lab.api:app
       - OLLAMA_HOST=http://ollama:11434
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
     ports:
       - "8004:8000"
 
@@ -139,6 +141,7 @@ services:
     environment:
       - APP_MODULE=memory_lab.api:app
       - OLLAMA_HOST=http://ollama:11434
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
       - CHROMA_HOST=chromadb
       - CHROMA_PORT=8000
     ports:
