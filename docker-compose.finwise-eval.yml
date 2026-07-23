@@ -1,0 +1,48 @@
+# Finwise evaluation mode.
+#
+# Default `docker compose up` starts LLMOps Studio's OWN small Ollama
+# (llmops-platform_ollama, host port 11435) loaded with demo models
+# (phi3, qwen2.5, llama3) -- fine for the standalone LLMOps Studio demo,
+# but that's a different Ollama instance than the one serving
+# finwise_scribe_v1, and running two *loaded* Ollama instances at once
+# isn't realistic on a 4GB VRAM box.
+#
+# This override instead points every lab at Finwise's own Ollama
+# (finwise_ollama, exposed on host port 11434 by finwise_scribe's own
+# docker-compose.yml) via the host machine. LLMOps's own ollama container
+# still starts as normal -- nothing in this override stops it -- but with
+# no lab pointed at it anymore it just sits idle with no model loaded, so
+# it costs a bit of RAM and nothing else. If you'd rather not have it
+# running at all, `docker compose stop ollama` after `up`.
+#
+# See scripts/eval_finwise_model.sh, which wires this together end to end
+# (checks Finwise's Ollama is up and has the model, brings this stack up
+# with this override, runs the smoke test).
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.finwise-eval.yml up -d
+#
+# host.docker.internal resolves to the host machine from inside a
+# container. It's built into Docker Desktop (Mac/Windows). On native Linux
+# Docker Engine (20.10+) it needs the extra_hosts entry below -- harmless
+# to include everywhere.
+
+x-finwise-ollama-env: &finwise-ollama-env
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  environment:
+    - OLLAMA_HOST=http://host.docker.internal:11434
+
+services:
+  studio-core:
+    <<: *finwise-ollama-env
+  rag-lab:
+    <<: *finwise-ollama-env
+  promptops-lab:
+    <<: *finwise-ollama-env
+  schema-lab:
+    <<: *finwise-ollama-env
+  review-lab:
+    <<: *finwise-ollama-env
+  memory-lab:
+    <<: *finwise-ollama-env

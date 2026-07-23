@@ -39,12 +39,12 @@ check() {
 
 echo "== Core infrastructure =="
 check "Ollama"        "$BASE:11435/api/tags"
-check "ChromaDB"       "$BASE:8088/api/v1/heartbeat"
+check "ChromaDB"       "$BASE:8088/api/v2/heartbeat"
 check "MLflow"        "$BASE:5000/health"
 
 echo
 echo "== Python services (health endpoints) =="
-check "Studio Core"    "$BASE:8000/api/v1/health" "healthy"
+check "Studio Core"    "$BASE:8000/health" "healthy"
 check "RAG Lab"        "$BASE:8002/health" "healthy"
 check "PromptOps Lab"  "$BASE:8003/health" "healthy"
 check "Schema Lab"     "$BASE:8004/health" "healthy"
