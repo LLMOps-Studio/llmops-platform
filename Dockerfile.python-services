@@ -1,0 +1,90 @@
+# =============================================================================
+# LLMOps Platform - Shared Python Service Image
+# =============================================================================
+
+ARG GIT_ORG=LLMOps-Studio
+ARG GIT_REF=main
+ARG INCLUDE_LABS="rag,promptops,schema,review,memory"
+ARG INCLUDE_STUDIO="true"
+
+FROM python:3.11-slim AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends git build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG GIT_ORG
+ARG GIT_REF
+ARG INCLUDE_LABS
+ARG INCLUDE_STUDIO
+
+WORKDIR /build
+
+# 1. Install llmops-common
+RUN git clone -b ${GIT_REF} https://github.com/${GIT_ORG}/llmops-common.git /tmp/llmops-common && \
+    cd /tmp/llmops-common && \
+    if [ -f "pyproject.toml" ]; then \
+        pip install --no-cache-dir --default-timeout=1000 --user .; \
+    elif [ -d "llmops-common" ] && [ -f "llmops-common/pyproject.toml" ]; then \
+        pip install --no-cache-dir --default-timeout=1000 --user ./llmops-common; \
+    else \
+        echo "Error: pyproject.toml not found!" && ls -R /tmp/llmops-common && exit 1; \
+    fi
+
+# 2. Install Labs
+RUN set -eu; \
+    IFS=','; \
+    for lab in ${INCLUDE_LABS}; do \
+      case "$lab" in \
+        rag) repo="rag-benchmark-lab"; dir="rag-benchmark-lab" ;; \
+        promptops) repo="promptops-lab"; dir="promptops-lab" ;; \
+        schema) repo="schema-lab"; dir="schema-lab" ;; \
+        review) repo="review-lab"; dir="review-lab" ;; \
+        memory) repo="memory-lab"; dir="memory-lab" ;; \
+        *) continue ;; \
+      esac; \
+      git clone -b ${GIT_REF} https://github.com/${GIT_ORG}/${repo}.git /tmp/${repo} && \
+      cd /tmp/${repo} && \
+      if [ -f "pyproject.toml" ]; then \
+          pip install --no-cache-dir --default-timeout=1000 --user .; \
+      elif [ -d "$dir" ] && [ -f "$dir/pyproject.toml" ]; then \
+          pip install --no-cache-dir --default-timeout=1000 --user "./$dir"; \
+      else \
+          echo "Error: pyproject.toml not found in $repo" && ls -R /tmp/${repo} && exit 1; \
+      fi; \
+    done
+
+# 3. Install Studio Core
+# Cloned locally (like every lab above) rather than installed straight from
+# a git+https pip spec, specifically so projects.yaml -- a repo-root config
+# file, not part of the installed Python package -- can be lifted out of
+# the checkout below. A bare `pip install git+...` only ever unpacks what
+# setuptools/hatchling puts in the wheel; a loose YAML file at the repo root
+# never makes it into site-packages, which is exactly why the Project
+# Context dropdown in the UI came back empty: ProjectRegistry looked for
+# projects.yaml at runtime and it simply didn't exist in the container.
+#
+# /tmp/llmops-studio/projects.yaml is guaranteed to exist by the time this
+# stage ends regardless of INCLUDE_STUDIO, so the final-stage COPY below
+# never has to guess whether the source path is there (a wildcard/optional
+# COPY would just silently break the INCLUDE_STUDIO=false build instead).
+RUN mkdir -p /tmp/llmops-studio && \
+    printf 'projects: []\n' > /tmp/llmops-studio/projects.yaml
+RUN if [ "${INCLUDE_STUDIO}" = "true" ]; then \
+      rm -rf /tmp/llmops-studio && \
+      git clone -b ${GIT_REF} https://github.com/${GIT_ORG}/llmops-studio.git /tmp/llmops-studio && \
+      cd /tmp/llmops-studio && \
+      pip install --no-cache-dir --default-timeout=1000 --user --no-deps . && \
+      pip install --no-cache-dir --default-timeout=1000 --user \
+        fastapi uvicorn "pydantic>=2.0.0" pyyaml python-dotenv "mlflow>=2.15,<3"; \
+    fi
+
+FROM python:3.11-slim
+WORKDIR /app
+COPY --from=builder /root/.local /root/.local
+COPY entrypoint.sh /entrypoint.sh
+COPY --from=builder /tmp/llmops-studio/projects.yaml /app/projects.yaml
+ENV PATH=/root/.local/bin:$PATH
+ENV PROJECTS_CONFIG_PATH=/app/projects.yaml
+RUN chmod +x /entrypoint.sh
+EXPOSE 8000
+ENTRYPOINT ["/entrypoint.sh"]
